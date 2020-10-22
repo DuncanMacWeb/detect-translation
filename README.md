@@ -46,6 +46,27 @@ The package was written in Typescript, so no need to install types separately.
 ## Getting started
 
 ```ts
+import TranslationDetector from 'detect-translation'
+
+const td = new TranslationDetector({
+  sourceLang: "en", // or your page’s language, if different
+  sourceUrl: "https://www.mywebsite.com/path/to/page.html",
+});
+
+td.translated // true | false
+td.lang() // 'fr'
+td.lang({extensions: 't'}) // 'fr-t-en-t0-google'
+td.translator() // { name: 'google', type: 'client' }
+
+td.addEventListener('translation', )
+td.on('translation', ({lang, translator}) => {
+
+});
+```
+
+---
+
+```ts
 import { observe } from "detect-translation";
 
 observe({
