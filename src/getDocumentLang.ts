@@ -1,4 +1,4 @@
-import { LangTranslatorInfo } from ".";
+import { LangTranslatorInfo } from "./getLangTranslatorInfo";
 import normalizeLangTag from "./normalizeLangTag";
 import { UNDETERMINED_LANGUAGE } from "./constants";
 

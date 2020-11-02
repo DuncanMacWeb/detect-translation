@@ -1,18 +1,25 @@
-import whichClientTranslation from "./whichClientTranslation";
-import whichProxyTranslation from "./whichProxyTranslation";
-import getDocumentLang, { LangIds } from "./getDocumentLang";
-import identifyIBMWatson from "./services/identifyIBMWatson";
+import { LangIds } from "./getDocumentLang";
 import { Services } from "./translationServices";
-import { UNDETERMINED_LANGUAGE } from "./constants";
 import skipToMainContentLangIds from "../translations/Skip-to-main-content";
+import getLangTranslatorInfo, { LangTranslatorInfo, TranslatorType } from './getLangTranslatorInfo'
 
-export type TranslatorType = "client" | "proxy" | "unknown";
+export interface TranslationDetectorParams {
+  source?: SourcePageMetadata;
+  includeTranslatorInLang?: boolean;
+}
 
-export type LangTranslatorInfo = {
+export type CanaryElementMetadata = {
+  selector?: string;
+  isFirstInDom?: boolean;
+  text?: string;
+  langIds?: LangIds;
+}
+
+export type SourcePageMetadata = {
   lang?: string;
-  service?: Services;
-  type?: TranslatorType;
-};
+  url?: string;
+  canary?: CanaryElementMetadata;
+}
 
 export type Callback = (
   lang: string,
@@ -35,86 +42,73 @@ export interface ObserverParams {
   includeTranslatorInLangTag?: boolean;
 }
 
-export const observe = ({
-  onTranslation,
-  sourceLang = "en",
-  sourceUrl,
-  textSelector = ".skip-link",
-  text = "Skip to main content",
-  textIsFirstContentfulChild = true,
-  langIds = skipToMainContentLangIds,
-  includeTranslatorInLangTag = false,
-}: ObserverParams): MutationObserver => {
-  let lastObservedLang = sourceLang;
+class TranslationDetector {
+  #source: SourcePageMetadata;
+  #extensions: string[];
+  #lastKnownLang: LangTranslatorInfo;
 
-  const observer = () => {
-    let identified: LangTranslatorInfo = getDocumentLang({
-      lang: sourceLang,
+  constructor({
+    source,
+    includeTranslatorInLang = false,
+  }: TranslationDetectorParams = {}) {
+    this.#source = {
+      lang: source?.lang ?? "en",
+      url: source?.url,
       canary: {
-        selector: textSelector,
-        text,
-        isFirstContentfulChild: textIsFirstContentfulChild,
-        langIds,
+        selector: source?.canary?.selector ?? ".skip-link",
+        text: source?.canary?.text ?? "Skip to main content",
+        langIds: source?.canary?.langIds ?? skipToMainContentLangIds,
+        isFirstInDom: source?.canary?.isFirstInDom ?? true,
       },
-    });
-
-    if (identified.lang === lastObservedLang) {
-      return;
-    }
-
-    identified = whichProxyTranslation(identified);
-
-    if (identified.type !== "proxy") {
-      identified = whichClientTranslation(identified);
-    }
-
-    // We check for IBM Watson after checking for client translations,
-    // as the IBM Watson check is brittle as it’s purely based on the filename
-    if (!identified.type) {
-      identified = identifyIBMWatson(identified, sourceUrl);
-    }
-
-    if (!identified.lang || identified.lang === UNDETERMINED_LANGUAGE) {
-      return;
-    }
-
-    identified.service ||= Services.UNDETERMINED;
-    identified.type ||= "unknown"; // lgtm [js/implicit-operand-conversion]
-
-    if (includeTranslatorInLangTag) {
-      // https://unicode-org.github.io/cldr/ldml/tr35.html#t_Extension
-      identified.lang = `${identified.lang}-t-${sourceLang}-t0-${identified.service}`;
-    }
-
-    onTranslation(identified.lang, {
-      service: identified.service,
-      type: identified.type,
-    });
-    lastObservedLang = identified.lang;
-  };
-
-  observer();
-
-  const mutationObserver = new MutationObserver(observer);
-  mutationObserver.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["class", "lang", "_msttexthash"],
-  });
-  if (textSelector) {
-    const canaryEl = document.querySelector(textSelector);
-    if (canaryEl) {
-      mutationObserver.observe(
-        canaryEl,
-        // we need to observe any and all changes made to our canary content element
-        {
-          attributes: true,
-          childList: true,
-          characterData: true,
-          subtree: true,
-        }
-      );
-    }
+    };
+    this.#extensions = includeTranslatorInLang ? ['t'] : [];
+    this.#lastKnownLang = { lang: this.#source.lang };
   }
 
-  return mutationObserver;
-};
+  detect(): LangTranslatorInfo {
+    return this.getLangTranslatorInfo();
+  }
+
+  onTranslation(callback: Callback) {
+    const observer = () => {
+      const identified = this.getLangTranslatorInfo();
+
+      callback(identified.lang as string, {
+        service: identified.service as Services,
+        type: identified.type as TranslatorType,
+      });
+      this.#lastKnownLang = identified.lang as string;
+    };
+
+    const mutationObserver = new MutationObserver(observer);
+    mutationObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "lang", "_msttexthash"],
+    });
+    if (this.#canary?.selector) {
+      const canaryEl = document.querySelector(this.#canary.selector);
+      if (canaryEl) {
+        mutationObserver.observe(
+          canaryEl,
+          // we need to observe any and all changes made to our canary content element
+          {
+            attributes: true,
+            childList: true,
+            characterData: true,
+            subtree: true,
+          }
+        );
+      }
+    }
+
+    return mutationObserver;
+  }
+
+  private getLangTranslatorInfo() {
+    return getLangTranslatorInfo({
+      lastKnownLang: this.#lastKnownLang,
+      source: this.#source,
+      extensions: this.#extensions,
+    });
+  }
+}
